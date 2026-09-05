@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MilkDrop → Butterchurn JSON Converter</title>
+<style>
+body{font-family:Arial,sans-serif;background:#101010;color:#eee;margin:0;padding:20px}
+main{max-width:800px;margin:auto}
+input,button{font-size:16px;padding:12px;margin:7px 0}
+button{cursor:pointer}
+button:disabled{opacity:.5}
+#status{white-space:pre-wrap;background:#191919;border:1px solid #333;border-radius:8px;padding:14px;margin-top:12px}
+.ok{color:#8f8}.err{color:#f88}
+</style>
+</head>
+<body>
+<main>
+<h2>MilkDrop → Butterchurn JSON Converter</h2>
+<input id="file" type="file" accept=".milk,text/plain">
+<br>
+<button id="convert" disabled>CONVERT TO BUTTERCHURN JSON</button>
+<div id="status">Loading the official converter...</div>
+
+<script>
+"use strict";
+
+const CDN =
+  "milkdrop-preset-converter-aws.min.js";
+
+const status = document.getElementById("status");
+const fileInput = document.getElementById("file");
+const button = document.getElementById("convert");
+
+function show(text, cls) {
+  status.className = cls || "";
+  status.textContent = text;
+}
+
+function getConverter() {
+  const x = window.milkdropPresetConverterAWS;
+  if (x && typeof x.convertPreset === "function") return x;
+  return null;
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.async = true;
+
+    s.onload = () => {
+      const c = getConverter();
+      if (c) {
+        resolve(c);
+      } else {
+        reject(new Error(
+          "The converter script loaded, but milkdropPresetConverterAWS.convertPreset was not exported."
+        ));
+      }
+    };
+
+    s.onerror = () => reject(new Error(
+      "The official converter script could not be loaded from jsDelivr."
+    ));
+
+    document.head.appendChild(s);
+  });
+}
+
+let converter = null;
+
+(async function init() {
+  try {
+    converter = getConverter();
+
+    if (!converter) {
+      converter = await loadScript(CDN);
+    }
+
+    show(
+      "CONVERTER LOADED SUCCESSFULLY\\n\\n" +
+      "Official milkdrop-preset-converter-aws 0.1.6 is ready.\\n\\n" +
+      "Select your .milk preset.",
+      "ok"
+    );
+    button.disabled = false;
+  } catch (e) {
+    console.error(e);
+    show(
+      "CONVERTER LOAD ERROR\\n\\n" +
+      e.message +
+      "\\n\\n" +
+      "The converter package is supposed to expose the global " +
+      "milkdropPresetConverterAWS object. If this error appears, " +
+      "the CDN/script itself is being blocked or failed to load.\\n\\n" +
+      "Check the browser Network/Console tab for the converter URL.",
+      "err"
+    );
+  }
+})();
+
+button.addEventListener("click", async () => {
+  const file = fileInput.files && fileInput.files[0];
+
+  if (!file) {
+    show("Please select a .milk preset first.", "err");
+    return;
+  }
+
+  if (!converter) {
+    show("The converter has not loaded yet.", "err");
+    return;
+  }
+
+  button.disabled = true;
+
+  try {
+    let text = await file.text();
+    text = text.replace(/^\uFEFF/, "");
+
+    /*
+      Do not assume [preset00] is the first section.
+      MilkDrop presets can contain whitespace/BOM/header variations.
+    */
+    if (!/\[preset\s*00\]/i.test(text)) {
+      throw new Error(
+        "No [preset00] section was found.\\n\\n" +
+        "First 300 characters of the selected file:\\n\\n" +
+        text.slice(0,300)
+      );
+    }
+
+    show(
+      "Preset recognized.\\n\\n" +
+      "Converting " + file.name + "...\\n\\n" +
+      "The official converter parses the MilkDrop equations and " +
+      "converts the HLSL shader portions to Butterchurn-compatible GLSL.",
+      ""
+    );
+
+    const result = await converter.convertPreset(text);
+
+    if (result && result.error) {
+      throw new Error(String(result.error));
+    }
+
+    if (!result || typeof result !== "object") {
+      throw new Error("The converter returned an invalid result.");
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(result,"baseVals")) {
+      throw new Error(
+        "The converter returned data, but it is not a complete Butterchurn preset: baseVals is missing."
+      );
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(result,"warp")) {
+      throw new Error(
+        "The converter returned data, but the converted warp section is missing."
+      );
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(result,"comp")) {
+      throw new Error(
+        "The converter returned data, but the converted comp section is missing."
+      );
+    }
+
+    const json = JSON.stringify(result, null, 2);
+    const blob = new Blob([json], {type:"application/json;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const output =
+      file.name.replace(/\\.milk$/i,"") + ".butterchurn.json";
+
+    a.href = url;
+    a.download = output;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+
+    show(
+      "CONVERSION SUCCESSFUL\\n\\n" +
+      "Input:  " + file.name + "\\n" +
+      "Output: " + output + "\\n\\n" +
+      "Verified Butterchurn fields:\\n" +
+      "✓ baseVals\\n" +
+      "✓ warp\\n" +
+      "✓ comp",
+      "ok"
+    );
+  } catch (e) {
+    console.error(e);
+    show(
+      "CONVERSION ERROR\\n\\n" +
+      (e && e.stack ? e.stack : e.message || String(e)),
+      "err"
+    );
+  } finally {
+    button.disabled = false;
+  }
+});
+</script>
+</main>
+</body>
+</html>
